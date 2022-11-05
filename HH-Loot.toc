@@ -1,0 +1,12 @@
+## Interface: 20504
+## Title: HH Loot management
+## Notes: Held Hostile loot management
+## Author: Pox / Meche
+## Version: 1.0.0
+## SavedVariables: HHLootDB
+## X-Category: Loot
+
+Libs\Libs.xml
+## Locale\localization.xml
+
+HH-Loot.lua
