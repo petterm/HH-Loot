@@ -9,20 +9,14 @@ local L = LibStub("AceLocale-3.0"):GetLocale(addonName, true)
 Core.L = L
 Core.version = GetAddOnMetadata(addonName, "Version")
 
-
 local GUILD_RANK_INITIATE = "Initiate"
 local GUILD_RANK_CACHE = {}
 local UI_CREATED = false
-local UI_CURRENT_ITEM = nil
-local UI_PLAYER_FRAMES = {}
 
 
 local defaults = {
     profile = {
         lootData = {},
-        windowX = 0,
-        windowY = 0,
-        hideTimout = 20,
         testRaid = false,
     },
 }
@@ -41,42 +35,6 @@ local optionsTable = {
                 Core.UIImport:Show()
             end,
             order = 1,
-            width = "full",
-        },
-        reset = {
-            type = "execute",
-            name = "Reset position",
-            func = function()
-                Core.db.profile.windowX = 0
-                Core.db.profile.windowY = 0
-            end,
-            order = 1,
-            width = "full",
-        },
-        item = {
-            type = "input",
-            name = "Set item",
-            usage = "itemID",
-            pattern = "%d+",
-            set = function(_, id)
-                print("Console set item", id)
-                Core:ShowItem(id)
-            end,
-            order = 2,
-            width = "full",
-        },
-        hideTimout = {
-            type = "input",
-            name = "Window fade",
-            usage = "seconds",
-            pattern = "%d+",
-            set = function(_, seconds)
-                Core.db.profile.hideTimout = tonumber(seconds)
-            end,
-            get = function()
-                return tostring(Core.db.profile.hideTimout)
-            end,
-            order = 3,
             width = "full",
         },
         testRaid = {
@@ -106,69 +64,24 @@ function Core:OnInitialize()
 
     Core.db = LibStub("AceDB-3.0"):New("HHLootDB", defaults)
     Core.UICreate()
+
+    if _G["Gargul"] ~= nil then
+        Core:HookGargul(_G["Gargul"])
+    end
 end
 
 
-GameTooltip:HookScript("OnTooltipSetItem", function(self)
-    if IsAltKeyDown() then
-        local link = select(2, self:GetItem())
-        if link then
-            local id = string.match(link, "item:(%d*)")
-            if id then
-                Core:ShowItem(id)
-            end
-        end
-    end
-end)
-
-
-function Core:ShowItem(itemId)
-    if UI_CURRENT_ITEM == itemId then
-        Core.UI:Show()
-        return
-    end
-    UI_CURRENT_ITEM = itemId
-    -- print("ShowItem", itemId)
-
-    -- Item info
-    local itemName, itemLink, itemQuality, _, _, itemType, itemSubType, _, itemInvType = GetItemInfo(itemId)
+local function getArmorType(itemId)
+    local itemName, _, _, _, _, itemType, itemSubType, _, itemInvType = GetItemInfo(itemId)
     if itemName == nil then
         print("Item not in cache, try again.")
-        return
+        return nil
     end
 
-    if itemQuality < 4 then return end
-
-    local _, _, _, itemColor = GetItemQualityColor(itemQuality)
-    local typeName = _G[itemInvType]
-
-    local isArmor = itemType == "Armor"
-    local armorType = itemSubType
-    local item = {
-        ["id"] = itemId,
-        ["icon"] = GetItemIcon(itemId),
-        ["name"] = itemName,
-        ["nameC"] = "|c"..itemColor..itemName.."|r",
-        ["link"] = itemLink,
-        ["type"] = typeName,
-        ["armorType"] = isArmor and armorType or nil,
-    }
-
-    -- Get players
-    local players = Core:GetPlayers(item)
-    -- tinsert(players, {
-    --     ["score"] = 105,
-    --     ["name"] = "Calavera",
-    --     ["initiate"] = false,
-    --     ["armor"] = true,
-    -- })
-    Core:UIUpdate(item, players)
-    Core.UI:Show()
-
-    Core:CancelAllTimers()
-    Core:ScheduleTimer(function()
-        Core.UI.ag:Play()
-    end, Core.db.profile.hideTimout)
+    if itemType == "Armor" then
+        return itemSubType
+    end
+    return nil
 end
 
 
@@ -213,7 +126,7 @@ local function comparePlayers(a, b)
 end
 
 
-function Core:GetPlayers(item)
+function Core:GetPlayers(itemId, itemArmorType)
     -- print("GetPlayers")
     local raidPlayers = {}
     if IsInRaid() then
@@ -250,7 +163,7 @@ function Core:GetPlayers(item)
         }
     end
 
-    local itemData = Core.db.profile.lootData[item["id"]]
+    local itemData = Core.db.profile.lootData[itemId]
     local itemPlayers = {}
     if itemData then
         for _, candidate in ipairs(itemData) do
@@ -260,7 +173,7 @@ function Core:GetPlayers(item)
                     ["score"] = candidate["score"],
                     ["name"] = name,
                     ["class"] = raidPlayers[name],
-                    ["armor"] = isClassArmor(item["armorType"], raidPlayers[name]),
+                    ["armor"] = isClassArmor(itemArmorType, raidPlayers[name]),
                     ["initiate"] = isGuildInitiate(name),
                 })
             end
@@ -270,6 +183,25 @@ function Core:GetPlayers(item)
     table.sort(itemPlayers, comparePlayers)
 
     return itemPlayers
+end
+
+
+function Core:GetTopPlayers(players)
+    -- print("GetTopPlayers")
+    -- DevTools_Dump(players)
+    local score = players[1]["score"]
+    local armor = players[1]["armor"]
+    local initiate = players[1]["initiate"]
+    local topPlayers = {}
+    for _, player in pairs(players) do
+        if player["armor"] == armor and
+            player["initiate"] == initiate and
+            player["score"] >= score - 3 then
+            tinsert(topPlayers, player)
+        end
+    end
+    -- DevTools_Dump(topPlayers)
+    return topPlayers
 end
 
 
@@ -287,21 +219,6 @@ function Core:GuildUpdate()
         end
         -- GUILD_RANK_CACHE["Qbx"] = "Initiate"
     end
-end
-
-
-local function FrameOnDragStart(self, arg1)
-    if arg1 == "LeftButton" then
-        self:StartMoving()
-    end
-end
-
-
-local function FrameOnDragStop(self)
-    self:StopMovingOrSizing()
-    local _, _, _, posX, posY = self:GetPoint(1)
-    Core.db.profile.windowX = posX
-    Core.db.profile.windowY = posY
 end
 
 
@@ -356,60 +273,6 @@ function Core:UICreate()
 
     local frameName = "HHLoot_UI"
 
-    local frame = CreateFrame("Frame", frameName, UIParent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
-    frame:SetPoint("CENTER", Core.db.profile.windowX, Core.db.profile.windowY)
-    frame:SetSize(280, 37)
-    frame:SetMovable(true)
-    frame:EnableMouse(true)
-    frame:RegisterForDrag("LeftButton", "RightButton")
-    frame:SetScript("OnMouseDown", FrameOnDragStart)
-    frame:SetScript("OnMouseUp", FrameOnDragStop)
-    -- frame:SetScript("OnHide", OnHide)
-    frame:SetToplevel(true)
-    frame:SetClampedToScreen(true)
-    frame:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background" })
-    frame:SetBackdropColor(0.35,0.35,0.35,1)
-    frame:Hide()
-    -- tinsert(UISpecialFrames, frameName)	-- allow ESC close
-
-    frame.ag = frame:CreateAnimationGroup()
-    frame.ag.alpha = frame.ag:CreateAnimation("Alpha")
-    frame.ag.alpha:SetFromAlpha(1)
-    frame.ag.alpha:SetToAlpha(0)
-    frame.ag.alpha:SetDuration(1)
-    frame.ag.alpha:SetSmoothing("OUT")
-    frame.ag:SetScript("OnFinished", function() frame:Hide() end)
-
-    Core.UI = frame
-
-    frame.item = CreateFrame("Frame", frameName.."_Item", frame)
-    frame.item:SetSize(270, 28)
-    frame.item:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -5)
-
-    frame.item.icon = frame.item:CreateTexture(frameName.."_ItemIcon")
-    frame.item.icon:SetDrawLayer("ARTWORK", 0)
-    frame.item.icon:SetPoint("TOPLEFT", frame.item, "TOPLEFT", 1, -1)
-    frame.item.icon:SetSize(26, 26)
-    frame.item.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-
-    frame.item.name = frame.item:CreateFontString(frameName.."_ItemName", "ARTWORK", "GameFontNormal")
-    frame.item.name:SetPoint("TOPLEFT", frame.item.icon, "TOPRIGHT", 3, 0)
-    frame.item.name:SetJustifyH("LEFT")
-    frame.item.name:SetText("")
-    frame.item.name:SetSize(230, 12)
-    -- frame.item.name.Ori_SetText = frame.item.name.SetText
-    -- frame.item.name.SetText = Button_ForceSetText
-
-    frame.item.extra = frame.item:CreateFontString(frameName.."_ItemExtra", "ARTWORK", "GameFontNormalSmall")
-    frame.item.extra:SetPoint("TOPLEFT", frame.item.name, "BOTTOMLEFT", 0, -1)
-    frame.item.extra:SetJustifyH("LEFT")
-    frame.item.extra:SetText("")
-    frame.item.extra:SetSize(230, 10)
-    frame.item.extra:SetTextColor(1, 1, 1, 1)
-
-    -- Create first player Row
-    tinsert(UI_PLAYER_FRAMES, Core:UICreatePlayerEntry(1, Core.UI))
-
     -- Create import UI
     local import = CreateFrame("Frame", frameName.."_Import", UIParent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
     import:SetSize(320, 220)
@@ -438,79 +301,6 @@ function Core:UICreate()
     Core.UIImport = import
 end
 
-function Core:UIUpdate(item, players)
-    -- print("UIUpdate")
-
-    -- Hide all player rows
-    for i, frame in ipairs(UI_PLAYER_FRAMES) do
-        frame:Hide()
-    end
-    
-    -- Show item
-    Core:UIUpdateItem(item)
-
-    -- for each player
-    for i, player in ipairs(players) do
-        if i > #UI_PLAYER_FRAMES then
-            tinsert(UI_PLAYER_FRAMES, Core:UICreatePlayerEntry(i, UI_PLAYER_FRAMES[i-1]))
-        end
-
-        Core:UIUpdatePlayerEntry(i, UI_PLAYER_FRAMES[i], player)
-    end
-end
-
-function Core:UIUpdateItem(item)
-    -- print("UIUpdateItem")
-    Core.UI.item.icon:SetTexture(item["icon"])
-    Core.UI.item.name:SetText(item["nameC"])
-    
-    local extra = item["type"]
-    if item["armorType"] ~= nil then
-        extra = extra.." "..item["armorType"]
-    end
-    Core.UI.item.extra:SetText(extra)
-end
-
-function Core:UIPlayerEntry(frame, player)
-    frame.score:SetText(player["score"])
-    frame.player:SetText(player["name"])
-end
-
-function Core:UICreatePlayerEntry(index, anchor)
-    -- print("UICreatePlayerEntry", index)
-    local frameName = "HHLoot_UI_Player"..index
-    local frame = CreateFrame("Frame", frameName, Core.UI, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
-    frame:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background" })
-    frame:SetBackdropColor(0.2,0.2,0.2,1)
-    frame:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, 0)
-    frame:SetWidth(280)
-    frame:SetHeight(20)
-
-    frame.score = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    frame.score:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -4)
-    frame.score:SetJustifyH("LEFT")
-    frame.score:SetText("[Score]")
-    frame.score:SetHeight(12)
-    frame.score:SetWidth(40)
-
-    frame.player = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    frame.player:SetPoint("LEFT", frame.score, "RIGHT", 6, 0)
-    frame.player:SetJustifyH("LEFT")
-    frame.player:SetText("[Player Name]")
-    frame.player:SetHeight(12)
-    frame.player:SetWidth(100)
-
-    frame.reason = frame:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    frame.reason:SetPoint("LEFT", frame.player, "RIGHT", 6, 0)
-    frame.reason:SetJustifyH("LEFT")
-    frame.reason:SetText("[Reason]")
-    frame.reason:SetHeight(12)
-    frame.reason:SetWidth(120)
-    frame.reason:SetTextColor(1, 1, 1, 1)
-
-    return frame
-end
-
 
 local function classColor(text, class)
     if RAID_CLASS_COLORS[class] ~= nil then
@@ -520,19 +310,92 @@ local function classColor(text, class)
 end
 
 
-function Core:UIUpdatePlayerEntry(index, frame, player)
-    -- print("UIUpdatePlayerEntry", index)
-    frame.score:SetText(player["score"])
-    frame.player:SetText(classColor(player["name"], player["class"]))
+local function scoreWithPadding(score)
+    local scoreStr = tostring(score)
+    if score < 100 then
+        scoreStr = "  "..tostring(score)
+    end
+    local decimal = string.match(scoreStr, "%.%d")
+    if not decimal then
+        scoreStr = scoreStr.."|cFF999999.0|r"
+    end
+    return scoreStr
+end
 
+function Core:AddToTooltip(tt, id)
+    local armorType = getArmorType(id)
+    local players = Core:GetPlayers(id, armorType)
+    local left = ""
+    local right = ""
     local reason = {}
-    if not player["armor"] then
-        tinsert(reason, "Armor")
-    end
-    if player["initiate"] then
-        tinsert(reason, "Initiate")
-    end
-    frame.reason:SetText(strjoin(", ", unpack(reason)))
+    tt:AddLine(" ", 1, 1, 1)
+    tt:AddLine("Held Hostile loot", 1, 0.5, 0)
+    for _, player in pairs(players) do
+        wipe(reason)
+        if not player["armor"] then
+            tinsert(reason, "Armor")
+        end
+        if player["initiate"] then
+            tinsert(reason, "Initiate")
+        end
+        left = scoreWithPadding(player["score"]).." "..classColor(player["name"], player["class"])
+        right = strjoin(", ", unpack(reason))
 
-    frame:Show()
+        tt:AddDoubleLine(left, right, 1, 1, 1, 1, 1, 1)
+    end
+end
+
+
+local isTooltipDone = nil
+GameTooltip:HookScript("OnTooltipSetItem", function(tooltip)
+    if (not isTooltipDone) and tooltip then
+        isTooltipDone = true
+
+        local link = select(2, tooltip:GetItem())
+        if link then
+            local id = string.match(link, "item:(%d*)")
+            if id and Core.db.profile.lootData[id] ~= nil then
+                Core:AddToTooltip(tooltip, id)
+            end
+        end
+    end
+end)
+
+
+GameTooltip:HookScript("OnTooltipCleared", function()
+    isTooltipDone = nil
+end)
+
+
+local function playerNamesString(players)
+    local names = {}
+    for _, player in pairs(players) do
+        tinsert(names, player["name"])
+    end
+    return strjoin(" ", unpack(names))
+end
+
+
+local function GargulMasterLooterUI_draw(MasterLooterUI, itemLink)
+    -- print("GargulMasterLooterUI_draw")
+    -- DevTools_Dump(itemLink)
+    if itemLink then
+        local id = string.match(itemLink, "item:(%d*)")
+        -- print("GargulMasterLooterUI_draw", id)
+        if id then
+            local armorType = getArmorType(id)
+            local players = Core:GetPlayers(id, armorType)
+            if #(players) > 0 then
+                local topPlayers = Core:GetTopPlayers(players)
+                local Gargul = _G["Gargul"]
+                local ItemNote = Gargul.Interface:getItem(Gargul.MasterLooterUI, "EditBox.ItemNote");
+                ItemNote:SetText(playerNamesString(topPlayers))
+            end
+        end
+    end
+end
+
+
+function Core:HookGargul(Gargul)
+    hooksecurefunc(Gargul.MasterLooterUI, "draw", GargulMasterLooterUI_draw)
 end
