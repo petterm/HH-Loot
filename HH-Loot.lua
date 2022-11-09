@@ -181,7 +181,8 @@ function Core:GetPlayers(itemId, itemArmorType)
     end
 
     table.sort(itemPlayers, comparePlayers)
-
+    -- DevTools_Dump(itemPlayers)
+    -- print(#itemPlayers)
     return itemPlayers
 end
 
@@ -240,11 +241,14 @@ local function OnImportTextChanged(self, arg1)
                 itemId = playerStr
             else
                 local name, score = strsplit(":", playerStr)
-                local player = {
-                    ["score"] = tonumber(score),
-                    ["name"] = name,
-                }
-                tinsert(itemPlayers, player)
+                score = tonumber(score)
+                if name ~= "undefined" and score ~= nil then
+                    local player = {
+                        ["score"] = score,
+                        ["name"] = name,
+                    }
+                    tinsert(itemPlayers, player)
+                end
             end
         end
         items[itemId] = itemPlayers
