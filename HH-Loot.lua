@@ -78,7 +78,7 @@ local function getArmorType(itemId)
         return nil
     end
 
-    if itemType == "Armor" then
+    if itemType == "Armor" and itemInvType ~= "INVTYPE_CLOAK" then
         return itemSubType
     end
     return nil
@@ -392,7 +392,7 @@ local function GargulMasterLooterUI_draw(MasterLooterUI, itemLink)
             if #(players) > 0 then
                 local topPlayers = Core:GetTopPlayers(players)
                 local Gargul = _G["Gargul"]
-                local ItemNote = Gargul.Interface:getItem(Gargul.MasterLooterUI, "EditBox.ItemNote");
+                local ItemNote = Gargul.Interface:get(Gargul.MasterLooterUI, "EditBox.ItemNote");
                 ItemNote:SetText(playerNamesString(topPlayers))
             end
         end

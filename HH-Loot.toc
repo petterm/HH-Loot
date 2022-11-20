@@ -2,7 +2,7 @@
 ## Title: HH Loot management
 ## Notes: Held Hostile loot management
 ## Author: Pox / Meche
-## Version: 1.0.0
+## Version: 1.1.0
 ## SavedVariables: HHLootDB
 ## X-Category: Loot
 
