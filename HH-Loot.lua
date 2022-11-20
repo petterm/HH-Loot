@@ -12,12 +12,20 @@ Core.version = GetAddOnMetadata(addonName, "Version")
 local GUILD_RANK_INITIATE = "Initiate"
 local GUILD_RANK_CACHE = {}
 local UI_CREATED = false
+local LOOT_PICKUP_TIMER = nil
+local LOOT_PICKUP_LIST = {}
+local LOOT_BLACKLIST = {}
+local LOOT_ITEM_SELF = LOOT_ITEM_SELF:gsub("%%s", "(.+)");
 
 
 local defaults = {
     profile = {
         lootData = {},
         testRaid = false,
+        lootWindow = false,
+        lootWindowFade = 5,
+        windowX = 0,
+        windowY = 0,
     },
 }
 
@@ -27,12 +35,49 @@ local optionsTable = {
     name = "Held Hostile Loot ("..Core.version..")",
     desc = "Loot helper",
     args = {
+        lootWindow = {
+            type = "toggle",
+            name = "Show loot pickups",
+            set = function(_, value)
+                Core.db.profile.lootWindow = value
+            end,
+            get = function()
+                return Core.db.profile.lootWindow
+            end,
+            order = 1,
+            width = "full",
+        },
+        lootWindowRange = {
+            type = "range",
+            name = "Loot pickup window fade",
+            min = 1,
+            max = 30,
+            step = 1,
+            set = function(_, value)
+                Core.db.profile.lootWindowFade = value
+            end,
+            get = function()
+                return Core.db.profile.lootWindowFade
+            end,
+            order = 2,
+            width = "full",
+        },
         import = {
             type = "execute",
             name = "Import",
             func = function()
                 Core.UIImport.edit:SetText("")
                 Core.UIImport:Show()
+            end,
+            order = 1,
+            width = "full",
+        },
+        testLootAction = {
+            type = "execute",
+            name = "Test loot pickup",
+            func = function()
+                LOOT_PICKUP_LIST = { "ITEM A", "ITEM B", "ITEM C" }
+                Core:LootPickup("NEW ITEM")
             end,
             order = 1,
             width = "full",
@@ -61,6 +106,7 @@ AceConfigDialog:AddToBlizOptions(addonName, "HH Loot")
 
 function Core:OnInitialize()
     Core:RegisterEvent("GUILD_ROSTER_UPDATE")
+    Core:RegisterEvent("CHAT_MSG_LOOT")
 
     Core.db = LibStub("AceDB-3.0"):New("HHLootDB", defaults)
     Core.UICreate()
@@ -223,6 +269,42 @@ function Core:GuildUpdate()
 end
 
 
+function parseLootMessage(msg)
+    local link = string.match(msg, LOOT_ITEM_SELF);
+    if link then
+        local id = string.match(link, "item:(%d*)")
+        return tonumber(id)
+    end
+    return nil
+end
+
+
+function Core:CHAT_MSG_LOOT(self, msg, ...)
+    if IsInRaid() and Core.db.profile.lootWindow then
+        local itemId = parseLootMessage(msg)
+        if itemId and not LOOT_BLACKLIST[itemId] then
+            local itemName, _, itemQuality = GetItemInfo(itemId)
+            if itemName and itemQuality == Enum.ItemQuality["Epic"] then
+                Core:LootPickup(itemName)
+            end
+        end
+    end
+end
+
+
+function Core:LootPickup(name)
+    tinsert(LOOT_PICKUP_LIST, name)
+    Core.UILoot.edit:SetText(strjoin("\n", unpack(LOOT_PICKUP_LIST)))
+    Core.UILoot:Show()
+
+    Core:CancelTimer(LOOT_PICKUP_TIMER)
+    LOOT_PICKUP_TIMER = Core:ScheduleTimer(function()
+        Core.UILoot:Hide()
+        wipe(LOOT_PICKUP_LIST)
+    end, Core.db.profile.lootWindowFade)
+end
+
+
 local function OnImportTextChanged(self, arg1)
     -- ID,Name:Score,Name:Score;ID,Name:Score
     local text = self:GetText()
@@ -271,11 +353,59 @@ local function OnImportEscapePressed(self)
 end
 
 
+local function FrameOnDragStart(self, arg1)
+    if arg1 == "LeftButton" then
+        self:StartMoving()
+    end
+end
+
+
+local function FrameOnDragStop(self)
+    self:StopMovingOrSizing()
+    local _, _, _, posX, posY = self:GetPoint(1)
+    Core.db.profile.windowX = posX
+    Core.db.profile.windowY = posY
+end
+
+
+local function OnLootEscapePressed(self)
+    Core:CancelTimer(LOOT_PICKUP_TIMER)
+    Core.UILoot:Hide()
+    wipe(LOOT_PICKUP_LIST)
+end
+
+
 function Core:UICreate()
     if UI_CREATED then return end
     UI_CREATED = true
 
     local frameName = "HHLoot_UI"
+
+    -- Create loot pickup UI
+    local loot = CreateFrame("Frame", frameName.."_Loot", UIParent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
+    loot:SetSize(320, 220)
+    loot:SetPoint("CENTER", Core.db.profile.windowX, Core.db.profile.windowY)
+    loot:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background" })
+    loot:SetBackdropColor(0.2,0.2,0.2,1)
+    loot:SetMovable(true)
+    loot:EnableMouse(true)
+    loot:RegisterForDrag("LeftButton", "RightButton")
+    loot:SetScript("OnMouseDown", FrameOnDragStart)
+    loot:SetScript("OnMouseUp", FrameOnDragStop)
+
+    loot.scroll = CreateFrame("ScrollFrame", frameName.."_LootScroll", loot)
+    loot.scroll:SetSize(300, 200)
+    loot.scroll:SetPoint("CENTER")
+    
+    loot.edit = CreateFrame("EditBox", frameName.."_LootEdit", loot.scroll)
+    loot.edit:SetMultiLine(true)
+    loot.edit:SetFontObject(ChatFontNormal)
+    loot.edit:SetWidth(300)
+    loot.edit:SetScript("OnEscapePressed", OnLootEscapePressed)
+    loot.edit:SetAutoFocus(false)
+    loot.scroll:SetScrollChild(loot.edit)
+    loot:Hide()
+    Core.UILoot = loot
 
     -- Create import UI
     local import = CreateFrame("Frame", frameName.."_Import", UIParent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
@@ -295,9 +425,6 @@ function Core:UICreate()
     import.edit:SetScript("OnTextChanged", OnImportTextChanged)
     import.edit:SetScript("OnEscapePressed", OnImportEscapePressed)
     import.scroll:SetScrollChild(import.edit)
-    
-    import.cancel = CreateFrame("Button", frameName.."_ImportCancel", import, "UIPanelCloseButton")
-    -- import.cancel:SetScript("OnClick")
     
     import.edit:SetText("Here is some text\nAnd some more text on a new line")
 
