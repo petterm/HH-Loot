@@ -133,7 +133,7 @@ end
 
 local function isClassArmor(armorType, class)
     if armorType == "Plate" then
-        return class == "WARRIOR" or class == "PALADIN" or class == "DEATH KNIGHT"
+        return class == "WARRIOR" or class == "PALADIN" or class == "DEATHKNIGHT"
     end
     if armorType == "Mail" then
         return class == "HUNTER" or class == "SHAMAN"
